@@ -10,6 +10,7 @@ param(
     [switch]$SkipProcessObserved,
     [switch]$SkipRuntimeCounters,
     [switch]$SkipRegistryBatchSync,
+    [switch]$SkipRegistryRuleScale,
     [switch]$SkipRegistryRollback,
     [switch]$SkipRegistryInterop,
     [switch]$LeaveInstalled,
@@ -193,6 +194,7 @@ $targetCertPath = Join-Path $TargetRoot 'DriverModule.cer'
 $targetProcessObservedScript = Join-Path $TargetRoot 'ProcessObservedTests.ps1'
 $targetRuntimeCountersScript = Join-Path $TargetRoot 'StatusRuntimeCountersTests.ps1'
 $targetRegistryBatchSyncScript = Join-Path $TargetRoot 'RegistryBatchSyncTests.ps1'
+$targetRegistryRuleScaleScript = Join-Path $TargetRoot 'RegistryRuleScaleTests.ps1'
 $targetRegistryRollbackScript = Join-Path $TargetRoot 'RegistryRollbackTests.ps1'
 $targetRegistryInteropScript = Join-Path $TargetRoot 'RegistryInteropTests.ps1'
 
@@ -213,9 +215,10 @@ if ($PlanOnly) {
     Write-Host '6. Optional ProcessObservedTests.ps1'
     Write-Host '7. Optional StatusRuntimeCountersTests.ps1'
     Write-Host '8. Optional RegistryBatchSyncTests.ps1'
-    Write-Host '9. Optional RegistryRollbackTests.ps1'
-    Write-Host '10. Optional RegistryInteropTests.ps1'
-    Write-Host '11. Optional stop/uninstall cleanup'
+    Write-Host '9. Optional RegistryRuleScaleTests.ps1'
+    Write-Host '10. Optional RegistryRollbackTests.ps1'
+    Write-Host '11. Optional RegistryInteropTests.ps1'
+    Write-Host '12. Optional stop/uninstall cleanup'
     return
 }
 
@@ -283,6 +286,16 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetRegistryBatchSyncScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running registry batch-sync hot reload regression'
+    }
+
+    if (-not $SkipRegistryRuleScale) {
+        if (-not (Test-Path $targetRegistryRuleScaleScript)) {
+            throw "RegistryRuleScaleTests.ps1 not found at target path: $targetRegistryRuleScaleScript"
+        }
+
+        Invoke-PowerShellFile -ScriptPath $targetRegistryRuleScaleScript -Arguments @(
+            '-HostGuardPath', $targetHostGuardExe
+        ) -Description 'Running registry dynamic-scale hot reload regression'
     }
 
     if (-not $SkipRegistryRollback) {
