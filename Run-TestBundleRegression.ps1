@@ -13,6 +13,7 @@ param(
     [switch]$SkipRegistryRuleScale,
     [switch]$SkipRegistryRollback,
     [switch]$SkipRegistryInterop,
+    [switch]$SkipLifecycleStress,
     [switch]$LeaveInstalled,
     [switch]$PlanOnly
 )
@@ -197,6 +198,7 @@ $targetRegistryBatchSyncScript = Join-Path $TargetRoot 'RegistryBatchSyncTests.p
 $targetRegistryRuleScaleScript = Join-Path $TargetRoot 'RegistryRuleScaleTests.ps1'
 $targetRegistryRollbackScript = Join-Path $TargetRoot 'RegistryRollbackTests.ps1'
 $targetRegistryInteropScript = Join-Path $TargetRoot 'RegistryInteropTests.ps1'
+$targetLifecycleStressScript = Join-Path $TargetRoot 'LifecycleStressTests.ps1'
 
 Write-Step "Bundle root: $bundleRoot"
 Write-Step "Target root: $TargetRoot"
@@ -218,7 +220,8 @@ if ($PlanOnly) {
     Write-Host '9. Optional RegistryRuleScaleTests.ps1'
     Write-Host '10. Optional RegistryRollbackTests.ps1'
     Write-Host '11. Optional RegistryInteropTests.ps1'
-    Write-Host '12. Optional stop/uninstall cleanup'
+    Write-Host '12. Optional LifecycleStressTests.ps1'
+    Write-Host '13. Optional stop/uninstall cleanup'
     return
 }
 
@@ -314,6 +317,16 @@ try {
         }
 
         Invoke-PowerShellFile -ScriptPath $targetRegistryInteropScript -Arguments @() -Description 'Running registry interop regression'
+    }
+
+    if (-not $SkipLifecycleStress) {
+        if (-not (Test-Path $targetLifecycleStressScript)) {
+            throw "LifecycleStressTests.ps1 not found at target path: $targetLifecycleStressScript"
+        }
+
+        Invoke-PowerShellFile -ScriptPath $targetLifecycleStressScript -Arguments @(
+            '-HostGuardPath', $targetHostGuardExe
+        ) -Description 'Running HostGuard lifecycle stress regression'
     }
 
     $finalStatus = Invoke-HostGuardStatusJson -HostGuardExePath $targetHostGuardExe
