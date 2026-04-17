@@ -585,17 +585,6 @@ namespace {
             L", 最近打开=" + FormatDriverSystemTimeValue(status.LastProcessBreakerOpenTime) +
             L", 最近关闭=" + FormatDriverSystemTimeValue(status.LastProcessBreakerCloseTime));
 
-        LogMessage(
-            L"[+] 驱动 ABI/策略: abi_version=" + std::to_wstring(status.AbiVersion) +
-            L", policy_epoch=" + std::to_wstring(status.PolicyEpoch));
-
-        LogMessage(
-            L"[+] 快路径/缓存: fast_path_hits=" + std::to_wstring(status.FastPathHitCount) +
-            L", cache_hits=" + std::to_wstring(status.CacheHitCount) +
-            L", cache_misses=" + std::to_wstring(status.CacheMissCount) +
-            L", cache_flushes=" + std::to_wstring(status.CacheFlushCount) +
-            L", slow_path=" + std::to_wstring(status.SlowPathCount));
-
         if (status.ConfigVersion[0] != L'\0' || status.ProfileName[0] != L'\0') {
             LogMessage(
                 L"[+] 驱动当前配置: Profile=" + std::wstring(status.ProfileName) +
