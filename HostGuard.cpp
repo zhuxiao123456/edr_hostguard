@@ -466,6 +466,21 @@ namespace {
 
         driverStatus["registry_rule_count"] = status.RegistryRuleCount;
         driverStatus["registry_allow_rule_count"] = status.RegistryAllowRuleCount;
+        json registryRuleClasses = json::object();
+        registryRuleClasses["total"] = status.RegistryRuleCount;
+        registryRuleClasses["exact"] = status.RegistryRuleExactCount;
+        registryRuleClasses["prefix"] = status.RegistryRulePrefixCount;
+        registryRuleClasses["suffix"] = status.RegistryRuleSuffixCount;
+        registryRuleClasses["contains"] = status.RegistryRuleContainsCount;
+        driverStatus["registry_rule_classes"] = registryRuleClasses;
+
+        json registryAllowRuleClasses = json::object();
+        registryAllowRuleClasses["total"] = status.RegistryAllowRuleCount;
+        registryAllowRuleClasses["exact"] = status.RegistryAllowRuleExactCount;
+        registryAllowRuleClasses["prefix"] = status.RegistryAllowRulePrefixCount;
+        registryAllowRuleClasses["suffix"] = status.RegistryAllowRuleSuffixCount;
+        registryAllowRuleClasses["contains"] = status.RegistryAllowRuleContainsCount;
+        driverStatus["registry_allow_rule_classes"] = registryAllowRuleClasses;
         driverStatus["driver_event_queue_count"] = status.DriverEventQueueCount;
         driverStatus["capture_parent_cmdline"] =
             (status.CaptureParentCommandLine == PROCESS_PARENT_CMDLINE_CAPTURE_ENABLED);

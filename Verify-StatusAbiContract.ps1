@@ -30,6 +30,14 @@ if ($sharedHeaderText -notmatch 'typedef struct _DRIVER_RUNTIME_STATUS\s*\{\s*UL
 
 $requiredRuntimeStatusFields = @(
     'PolicyEpoch',
+    'RegistryRuleExactCount',
+    'RegistryRulePrefixCount',
+    'RegistryRuleSuffixCount',
+    'RegistryRuleContainsCount',
+    'RegistryAllowRuleExactCount',
+    'RegistryAllowRulePrefixCount',
+    'RegistryAllowRuleSuffixCount',
+    'RegistryAllowRuleContainsCount',
     'FastPathHitCount',
     'CacheHitCount',
     'CacheMissCount',
@@ -77,6 +85,25 @@ if ($hostGuardText -notmatch 'cache_hit_count') {
 
 if ($hostGuardText -notmatch 'slow_path_count') {
     throw 'HostGuard JSON status output must include slow_path_count.'
+}
+
+$requiredJsonFields = @(
+    'registry_rule_classes',
+    'registry_allow_rule_classes',
+    'status.RegistryRuleExactCount',
+    'status.RegistryRulePrefixCount',
+    'status.RegistryRuleSuffixCount',
+    'status.RegistryRuleContainsCount',
+    'status.RegistryAllowRuleExactCount',
+    'status.RegistryAllowRulePrefixCount',
+    'status.RegistryAllowRuleSuffixCount',
+    'status.RegistryAllowRuleContainsCount'
+)
+
+foreach ($field in $requiredJsonFields) {
+    if ($hostGuardText -notmatch [regex]::Escape($field)) {
+        throw "HostGuard JSON status output must include $field."
+    }
 }
 
 if (-not (Test-Path $runtimeCountersTestPath)) {
