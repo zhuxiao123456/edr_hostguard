@@ -37,6 +37,14 @@ bool AddRegistryRule(HANDLE hDevice, const REGISTRY_RULE& rule);
 bool ClearRegistryRules(HANDLE hDevice);
 bool AddRegistryAllowRule(HANDLE hDevice, const REGISTRY_RULE& rule);
 bool ClearRegistryAllowRules(HANDLE hDevice);
+bool ReplaceRegistryRules(
+    HANDLE hDevice,
+    const std::vector<REGISTRY_RULE>& rules,
+    DWORD* outErrorCode = nullptr);
+bool ReplaceRegistryAllowRules(
+    HANDLE hDevice,
+    const std::vector<REGISTRY_RULE>& rules,
+    DWORD* outErrorCode = nullptr);
 bool QueryDriverStatus(HANDLE hDevice, DRIVER_RUNTIME_STATUS& outStatus);
 bool TerminateTargetProcess(HANDLE hDevice, DWORD processId, LONG exitStatus, DWORD* outErrorCode = nullptr);
 bool SetActiveDriverConfigInfo(

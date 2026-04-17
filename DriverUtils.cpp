@@ -779,6 +779,82 @@ bool AddRegistryRule(HANDLE hDevice, const REGISTRY_RULE& inputRule) {
     return true;
 }
 
+static bool ReplaceRegistryRuleBatch(
+    HANDLE hDevice,
+    DWORD ioctlCode,
+    const std::vector<REGISTRY_RULE>& inputRules,
+    const wchar_t* errorPrefix,
+    DWORD* outErrorCode) {
+    if (outErrorCode != nullptr) {
+        *outErrorCode = ERROR_SUCCESS;
+    }
+
+    if (hDevice == INVALID_HANDLE_VALUE || hDevice == NULL) {
+        std::wcerr << L"[-] 错误：传入的驱动通信句柄无效！" << std::endl;
+        if (outErrorCode != nullptr) {
+            *outErrorCode = ERROR_INVALID_HANDLE;
+        }
+        return false;
+    }
+
+    const size_t ruleCount = inputRules.size();
+    const size_t headerSize = FIELD_OFFSET(REGISTRY_RULE_BATCH_UPDATE, Rules);
+    const size_t maxRuleCount = MAXDWORD / sizeof(REGISTRY_RULE);
+    if (ruleCount > maxRuleCount || (headerSize + sizeof(REGISTRY_RULE) * ruleCount) > MAXDWORD) {
+        std::wcerr << L"[-] 错误：注册表规则数量过大，无法进行批量同步。" << std::endl;
+        if (outErrorCode != nullptr) {
+            *outErrorCode = ERROR_INVALID_PARAMETER;
+        }
+        return false;
+    }
+
+    const DWORD requestSize = static_cast<DWORD>(headerSize + sizeof(REGISTRY_RULE) * ruleCount);
+    std::vector<BYTE> requestBuffer(requestSize, 0);
+    REGISTRY_RULE_BATCH_UPDATE* batchUpdate =
+        reinterpret_cast<REGISTRY_RULE_BATCH_UPDATE*>(requestBuffer.data());
+    batchUpdate->AbiVersion = PEBMONITOR_ABI_VERSION;
+    batchUpdate->RuleCount = static_cast<ULONG>(ruleCount);
+
+    for (size_t index = 0; index < ruleCount; ++index) {
+        REGISTRY_RULE sanitizedRule = inputRules[index];
+        sanitizedRule.RuleId[MAX_RULE_ID_LENGTH - 1] = L'\0';
+        sanitizedRule.ProcessName[MAX_RULE_LENGTH - 1] = L'\0';
+        sanitizedRule.KeyPath[MAX_REG_PATH_LENGTH - 1] = L'\0';
+        sanitizedRule.InfoClass[MAX_RULE_LENGTH - 1] = L'\0';
+        sanitizedRule.ValueName[MAX_RULE_LENGTH - 1] = L'\0';
+        sanitizedRule.ValueData[MAX_RULE_LENGTH - 1] = L'\0';
+        batchUpdate->Rules[index] = sanitizedRule;
+    }
+
+    DWORD bytesReturned = 0;
+    BOOL result = DeviceIoControl(
+        hDevice,
+        ioctlCode,
+        batchUpdate,
+        requestSize,
+        NULL,
+        0,
+        &bytesReturned,
+        NULL);
+
+    if (!result) {
+        DWORD errorCode = GetLastError();
+        if (outErrorCode != nullptr) {
+            *outErrorCode = errorCode;
+        }
+        if (errorPrefix != nullptr &&
+            errorPrefix[0] != L'\0' &&
+            errorCode != ERROR_INVALID_FUNCTION &&
+            errorCode != ERROR_NOT_SUPPORTED &&
+            errorCode != ERROR_CALL_NOT_IMPLEMENTED) {
+            std::wcerr << errorPrefix << L" (错误码: " << errorCode << L")" << std::endl;
+        }
+        return false;
+    }
+
+    return true;
+}
+
 bool ClearRegistryRules(HANDLE hDevice) {
     if (hDevice == INVALID_HANDLE_VALUE || hDevice == NULL) {
         std::wcerr << L"[-] 错误：传入的驱动通信句柄无效！" << std::endl;
@@ -845,6 +921,30 @@ bool ClearRegistryAllowRules(HANDLE hDevice) {
     }
 
     return true;
+}
+
+bool ReplaceRegistryRules(
+    HANDLE hDevice,
+    const std::vector<REGISTRY_RULE>& rules,
+    DWORD* outErrorCode) {
+    return ReplaceRegistryRuleBatch(
+        hDevice,
+        IOCTL_REPLACE_REGISTRY_RULES,
+        rules,
+        L"[-] 错误：批量下发注册表规则失败，IOCTL 拒绝",
+        outErrorCode);
+}
+
+bool ReplaceRegistryAllowRules(
+    HANDLE hDevice,
+    const std::vector<REGISTRY_RULE>& rules,
+    DWORD* outErrorCode) {
+    return ReplaceRegistryRuleBatch(
+        hDevice,
+        IOCTL_REPLACE_REGISTRY_ALLOW_RULES,
+        rules,
+        L"[-] 错误：批量下发注册表白名单规则失败，IOCTL 拒绝",
+        outErrorCode);
 }
 
 bool QueryDriverStatus(HANDLE hDevice, DRIVER_RUNTIME_STATUS& outStatus) {

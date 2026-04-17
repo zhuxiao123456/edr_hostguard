@@ -1250,7 +1250,13 @@ static int RunTerminateProcessCommand(const wchar_t* pidText) {
     return 0;
 }
 
-static bool ApplyRegistryRules(HANDLE hDevice, const RuleConfiguration& config) {
+static bool ShouldFallbackToLegacyRegistryRuleSync(DWORD errorCode) {
+    return errorCode == ERROR_INVALID_FUNCTION ||
+        errorCode == ERROR_NOT_SUPPORTED ||
+        errorCode == ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+static bool ApplyRegistryRulesLegacy(HANDLE hDevice, const RuleConfiguration& config) {
     if (!ClearRegistryRules(hDevice)) {
         LogMessage(L"[!] 警告：清空驱动注册表规则失败，继续尝试下发配置中的规则。");
     }
@@ -1258,9 +1264,6 @@ static bool ApplyRegistryRules(HANDLE hDevice, const RuleConfiguration& config) 
     if (!ClearRegistryAllowRules(hDevice)) {
         LogMessage(L"[!] 警告：清空驱动注册表白名单失败，继续尝试下发配置中的规则。");
     }
-
-    LogRegistryRuleClassStats(L"[*] 注册表规则分类[kernel/block]", config.registryRuleClassStats);
-    LogRegistryRuleClassStats(L"[*] 注册表规则分类[kernel/allow]", config.registryAllowRuleClassStats);
 
     bool allSucceeded = true;
     for (std::vector<REGISTRY_RULE>::const_iterator it = config.registryRules.begin();
@@ -1282,6 +1285,37 @@ static bool ApplyRegistryRules(HANDLE hDevice, const RuleConfiguration& config) 
     LogMessage(L"[+] 已同步注册表拦截规则数量: " + std::to_wstring(config.registryRules.size()));
     LogMessage(L"[+] 已同步注册表白名单规则数量: " + std::to_wstring(config.registryAllowRules.size()));
     return allSucceeded;
+}
+
+static bool ApplyRegistryRules(HANDLE hDevice, const RuleConfiguration& config) {
+    LogRegistryRuleClassStats(L"[*] 注册表规则分类[kernel/block]", config.registryRuleClassStats);
+    LogRegistryRuleClassStats(L"[*] 注册表规则分类[kernel/allow]", config.registryAllowRuleClassStats);
+
+    DWORD replaceBlockError = ERROR_SUCCESS;
+    if (!ReplaceRegistryRules(hDevice, config.registryRules, &replaceBlockError)) {
+        if (ShouldFallbackToLegacyRegistryRuleSync(replaceBlockError)) {
+            LogMessage(L"[!] 驱动不支持批量注册表规则替换，回退到逐条兼容下发模式。");
+            return ApplyRegistryRulesLegacy(hDevice, config);
+        }
+
+        LogMessage(L"[!] 批量同步注册表拦截规则失败，错误码: " + std::to_wstring(replaceBlockError));
+        return false;
+    }
+
+    DWORD replaceAllowError = ERROR_SUCCESS;
+    if (!ReplaceRegistryAllowRules(hDevice, config.registryAllowRules, &replaceAllowError)) {
+        if (ShouldFallbackToLegacyRegistryRuleSync(replaceAllowError)) {
+            LogMessage(L"[!] 驱动不支持批量注册表白名单替换，回退到逐条兼容下发模式。");
+            return ApplyRegistryRulesLegacy(hDevice, config);
+        }
+
+        LogMessage(L"[!] 批量同步注册表白名单规则失败，错误码: " + std::to_wstring(replaceAllowError));
+        return false;
+    }
+
+    LogMessage(L"[+] 已批量同步注册表拦截规则数量: " + std::to_wstring(config.registryRules.size()));
+    LogMessage(L"[+] 已批量同步注册表白名单规则数量: " + std::to_wstring(config.registryAllowRules.size()));
+    return true;
 }
 
 static bool SyncDriverConfigInfo(HANDLE hDevice, const RuleConfiguration& config) {

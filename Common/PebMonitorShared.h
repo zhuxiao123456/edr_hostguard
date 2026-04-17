@@ -11,7 +11,7 @@
 #define MAX_EVENT_COMMAND_LINE_LENGTH 256
 #define MAX_REGISTRY_RULE_COUNT 256
 
-#define PEBMONITOR_ABI_VERSION 2UL
+#define PEBMONITOR_ABI_VERSION 3UL
 #define PEBMONITOR_ABI_IS_COMPAT(v) ((v) == PEBMONITOR_ABI_VERSION)
 
 #define PEB_MONITOR_DEVICE 0x8000
@@ -24,6 +24,8 @@
 #define IOCTL_SET_ACTIVE_CONFIG_INFO CTL_CODE(PEB_MONITOR_DEVICE, 0x80A, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_HIPS_HEARTBEAT CTL_CODE(PEB_MONITOR_DEVICE, 0x80B, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_EDR_TERMINATE_PROCESS CTL_CODE(PEB_MONITOR_DEVICE, 0x80D, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_REPLACE_REGISTRY_RULES CTL_CODE(PEB_MONITOR_DEVICE, 0x80E, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_REPLACE_REGISTRY_ALLOW_RULES CTL_CODE(PEB_MONITOR_DEVICE, 0x80F, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 #define PEBMONITOR_PROCESS_PORT_NAME L"\\PebMonitorProcessPort"
 #define PROCESS_PORT_PROTOCOL_VERSION 3UL
@@ -75,8 +77,6 @@ typedef enum _HIPS_PROTECTION_MODE {
     HIPS_MODE_MONITOR_ONLY = 0,
     HIPS_MODE_BLOCKING = 1
 } HIPS_PROTECTION_MODE, *PHIPS_PROTECTION_MODE;
-
-#pragma pack(push, 8)
 
 typedef struct _PROCESS_PORT_REQUEST {
     ULONG Version;
@@ -135,6 +135,12 @@ typedef struct _REGISTRY_RULE {
     WCHAR RuleId[MAX_RULE_ID_LENGTH];
 } REGISTRY_RULE, *PREGISTRY_RULE;
 
+typedef struct _REGISTRY_RULE_BATCH_UPDATE {
+    ULONG AbiVersion;
+    ULONG RuleCount;
+    REGISTRY_RULE Rules[ANYSIZE_ARRAY];
+} REGISTRY_RULE_BATCH_UPDATE, *PREGISTRY_RULE_BATCH_UPDATE;
+
 typedef struct _DRIVER_CONFIG_INFO {
     WCHAR ConfigVersion[MAX_RULE_LENGTH];
     WCHAR ProfileName[MAX_RULE_LENGTH];
@@ -152,9 +158,13 @@ typedef struct _DRIVER_RUNTIME_STATUS {
     ULONG RegistryRuleCount;
     ULONG RegistryAllowRuleCount;
     ULONG DriverEventQueueCount;
-    ULONG CaptureParentCommandLine;
-    ULONG64 DriverEventDropCount;
-    ULONG64 DriverEventAllocFailCount;
+    ULONGLONG DriverEventDropCount;
+    ULONGLONG DriverEventAllocFailCount;
+    ULONGLONG FastPathHitCount;
+    ULONGLONG CacheHitCount;
+    ULONGLONG CacheMissCount;
+    ULONGLONG CacheFlushCount;
+    ULONGLONG SlowPathCount;
     ULONG64 ProcessVerdictRequestCount;
     ULONG64 ProcessVerdictTimeoutCount;
     ULONG64 ProcessPortConnectCount;
@@ -166,28 +176,22 @@ typedef struct _DRIVER_RUNTIME_STATUS {
     ULONG64 ProcessBreakerOpenCount;
     ULONG64 LastProcessBreakerOpenTime;
     ULONG64 LastProcessBreakerCloseTime;
-    ULONG64 FastPathHitCount;
-    ULONG64 CacheHitCount;
-    ULONG64 CacheMissCount;
-    ULONG64 CacheFlushCount;
-    ULONG64 SlowPathCount;
     ULONG ProcessVerdictTimeoutMs;
     ULONG ProcessVerdictFailMode;
     ULONG HeartbeatIntervalMs;
     ULONG HeartbeatTimeoutMs;
+    ULONG CaptureParentCommandLine;
     WCHAR ConfigVersion[MAX_RULE_LENGTH];
     WCHAR ProfileName[MAX_RULE_LENGTH];
     WCHAR GeneratedAt[MAX_RULE_LENGTH];
 } DRIVER_RUNTIME_STATUS, *PDRIVER_RUNTIME_STATUS;
-
-#pragma pack(pop)
 
 static_assert(sizeof(PROCESS_PORT_REQUEST) == 6176, "Unexpected PROCESS_PORT_REQUEST size");
 static_assert(sizeof(PROCESS_PORT_REPLY) == 8, "Unexpected PROCESS_PORT_REPLY size");
 static_assert(sizeof(EDR_TERMINATE_PROCESS_REQUEST) == 8, "Unexpected EDR_TERMINATE_PROCESS_REQUEST size");
 static_assert(sizeof(DRIVER_EVENT) == 3868, "Unexpected DRIVER_EVENT size");
 static_assert(sizeof(REGISTRY_RULE) == 3360, "Unexpected REGISTRY_RULE size");
+static_assert(FIELD_OFFSET(REGISTRY_RULE_BATCH_UPDATE, Rules) == 8, "Unexpected REGISTRY_RULE_BATCH_UPDATE header size");
 static_assert(sizeof(DRIVER_CONFIG_INFO) == 1548, "Unexpected DRIVER_CONFIG_INFO size");
-static_assert(FIELD_OFFSET(DRIVER_RUNTIME_STATUS, AbiVersion) == 0, "AbiVersion must be the first field");
-static_assert(FIELD_OFFSET(DRIVER_RUNTIME_STATUS, PolicyEpoch) == 12, "Unexpected PolicyEpoch offset");
-static_assert(sizeof(DRIVER_RUNTIME_STATUS) == 1728, "Unexpected DRIVER_RUNTIME_STATUS size");
+static_assert(FIELD_OFFSET(DRIVER_RUNTIME_STATUS, AbiVersion) == 0, "AbiVersion must remain at offset 0");
+static_assert(sizeof(DRIVER_RUNTIME_STATUS) == 1736, "Unexpected DRIVER_RUNTIME_STATUS size");
