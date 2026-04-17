@@ -9,6 +9,7 @@ param(
     [switch]$SkipCertificateImport,
     [switch]$SkipProcessObserved,
     [switch]$SkipRuntimeCounters,
+    [switch]$SkipRegistryBatchSync,
     [switch]$SkipRegistryInterop,
     [switch]$LeaveInstalled,
     [switch]$PlanOnly
@@ -190,6 +191,7 @@ $targetHostGuardExe = Join-Path $TargetRoot 'HostGuard.exe'
 $targetCertPath = Join-Path $TargetRoot 'DriverModule.cer'
 $targetProcessObservedScript = Join-Path $TargetRoot 'ProcessObservedTests.ps1'
 $targetRuntimeCountersScript = Join-Path $TargetRoot 'StatusRuntimeCountersTests.ps1'
+$targetRegistryBatchSyncScript = Join-Path $TargetRoot 'RegistryBatchSyncTests.ps1'
 $targetRegistryInteropScript = Join-Path $TargetRoot 'RegistryInteropTests.ps1'
 
 Write-Step "Bundle root: $bundleRoot"
@@ -208,8 +210,9 @@ if ($PlanOnly) {
     Write-Host '5. Wait for status --json ready state'
     Write-Host '6. Optional ProcessObservedTests.ps1'
     Write-Host '7. Optional StatusRuntimeCountersTests.ps1'
-    Write-Host '8. Optional RegistryInteropTests.ps1'
-    Write-Host '9. Optional stop/uninstall cleanup'
+    Write-Host '8. Optional RegistryBatchSyncTests.ps1'
+    Write-Host '9. Optional RegistryInteropTests.ps1'
+    Write-Host '10. Optional stop/uninstall cleanup'
     return
 }
 
@@ -267,6 +270,16 @@ try {
             '-HostGuardPath', $targetHostGuardExe,
             '-RepeatCount', $RepeatCount
         ) -Description 'Running runtime counter regression'
+    }
+
+    if (-not $SkipRegistryBatchSync) {
+        if (-not (Test-Path $targetRegistryBatchSyncScript)) {
+            throw "RegistryBatchSyncTests.ps1 not found at target path: $targetRegistryBatchSyncScript"
+        }
+
+        Invoke-PowerShellFile -ScriptPath $targetRegistryBatchSyncScript -Arguments @(
+            '-HostGuardPath', $targetHostGuardExe
+        ) -Description 'Running registry batch-sync hot reload regression'
     }
 
     if (-not $SkipRegistryInterop) {
