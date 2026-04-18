@@ -8,6 +8,7 @@ param(
     [switch]$SkipCleanup,
     [switch]$SkipCertificateImport,
     [switch]$SkipProcessObserved,
+    [switch]$SkipFileInterop,
     [switch]$SkipRuntimeCounters,
     [switch]$SkipRegistryBatchSync,
     [switch]$SkipRegistryRuleScale,
@@ -194,6 +195,7 @@ $deployScriptPath = Join-Path $bundleRoot 'Deploy-TestBundle.ps1'
 $targetHostGuardExe = Join-Path $TargetRoot 'HostGuard.exe'
 $targetCertPath = Join-Path $TargetRoot 'DriverModule.cer'
 $targetProcessObservedScript = Join-Path $TargetRoot 'ProcessObservedTests.ps1'
+$targetFileInteropScript = Join-Path $TargetRoot 'FileInteropTests.ps1'
 $targetRuntimeCountersScript = Join-Path $TargetRoot 'StatusRuntimeCountersTests.ps1'
 $targetRegistryBatchSyncScript = Join-Path $TargetRoot 'RegistryBatchSyncTests.ps1'
 $targetRegistryRuleScaleScript = Join-Path $TargetRoot 'RegistryRuleScaleTests.ps1'
@@ -217,14 +219,15 @@ if ($PlanOnly) {
     Write-Host '4. HostGuard service install/start'
     Write-Host '5. Wait for status --json ready state'
     Write-Host '6. Optional ProcessObservedTests.ps1'
-    Write-Host '7. Optional StatusRuntimeCountersTests.ps1'
-    Write-Host '8. Optional RegistryBatchSyncTests.ps1'
-    Write-Host '9. Optional RegistryRuleScaleTests.ps1'
-    Write-Host '10. Optional RegistryRuleOrderTests.ps1'
-    Write-Host '11. Optional RegistryRollbackTests.ps1'
-    Write-Host '12. Optional RegistryInteropTests.ps1'
-    Write-Host '13. Optional LifecycleStressTests.ps1'
-    Write-Host '14. Optional stop/uninstall cleanup'
+    Write-Host '7. Optional FileInteropTests.ps1'
+    Write-Host '8. Optional StatusRuntimeCountersTests.ps1'
+    Write-Host '9. Optional RegistryBatchSyncTests.ps1'
+    Write-Host '10. Optional RegistryRuleScaleTests.ps1'
+    Write-Host '11. Optional RegistryRuleOrderTests.ps1'
+    Write-Host '12. Optional RegistryRollbackTests.ps1'
+    Write-Host '13. Optional RegistryInteropTests.ps1'
+    Write-Host '14. Optional LifecycleStressTests.ps1'
+    Write-Host '15. Optional stop/uninstall cleanup'
     return
 }
 
@@ -271,6 +274,14 @@ try {
         }
 
         Invoke-PowerShellFile -ScriptPath $targetProcessObservedScript -Arguments @() -Description 'Running observed process telemetry regression'
+    }
+
+    if (-not $SkipFileInterop) {
+        if (-not (Test-Path $targetFileInteropScript)) {
+            throw "FileInteropTests.ps1 not found at target path: $targetFileInteropScript"
+        }
+
+        Invoke-PowerShellFile -ScriptPath $targetFileInteropScript -Arguments @() -Description 'Running protected-file interop regression'
     }
 
     if (-not $SkipRuntimeCounters) {

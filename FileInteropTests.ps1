@@ -75,9 +75,11 @@ function Read-JsonLines {
 function Find-BlockedFileEvent {
     param(
         [object[]]$Events,
-        [string]$ExpectedTargetPath
+        [string]$ExpectedTargetPath,
+        [string[]]$ExpectedInfoClasses = @()
     )
 
+    $fallbackEvent = $null
     foreach ($event in $Events) {
         if ($null -eq $event) {
             continue
@@ -99,10 +101,102 @@ function Find-BlockedFileEvent {
             continue
         }
 
-        return $event
+        $actualInfoClass = [string]$event.info_class
+        if ($ExpectedInfoClasses.Count -eq 0) {
+            return $event
+        }
+
+        foreach ($expectedInfoClass in $ExpectedInfoClasses) {
+            if ($actualInfoClass.Equals($expectedInfoClass, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $event
+            }
+        }
+
+        if ($null -eq $fallbackEvent) {
+            $fallbackEvent = $event
+        }
+    }
+
+    return $fallbackEvent
+}
+
+function Wait-BlockedFileEvent {
+    param(
+        [string]$ResolvedEventPath,
+        [int]$BaselineCount,
+        [string]$ExpectedTargetPath,
+        [string[]]$ExpectedInfoClasses = @()
+    )
+
+    $matchedEvent = $null
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $allEvents = Read-JsonLines -Path $ResolvedEventPath
+        $newEvents = if ($allEvents.Count -gt $BaselineCount) {
+            @($allEvents | Select-Object -Skip $BaselineCount)
+        }
+        else {
+            @()
+        }
+
+        $matchedEvent = Find-BlockedFileEvent `
+            -Events $newEvents `
+            -ExpectedTargetPath $ExpectedTargetPath `
+            -ExpectedInfoClasses $ExpectedInfoClasses
+        if ($null -ne $matchedEvent) {
+            return $matchedEvent
+        }
+
+        Start-Sleep -Milliseconds $PollIntervalMs
     }
 
     return $null
+}
+
+function Invoke-BlockedMutationValidation {
+    param(
+        [string]$Name,
+        [string]$ExpectedTargetPath,
+        [scriptblock]$Action,
+        [string[]]$ExpectedInfoClasses = @()
+    )
+
+    $baselineCount = (Read-JsonLines -Path $resolvedEventPath).Count
+    $operationBlocked = $false
+    $operationError = ''
+
+    Write-Step "Attempting mutation: $Name"
+    try {
+        & $Action
+    }
+    catch {
+        $operationBlocked = $true
+        $operationError = $_.Exception.Message
+    }
+
+    if (-not $operationBlocked) {
+        throw "Protected driver mutation unexpectedly succeeded: $Name"
+    }
+
+    $matchedEvent = Wait-BlockedFileEvent `
+        -ResolvedEventPath $resolvedEventPath `
+        -BaselineCount $baselineCount `
+        -ExpectedTargetPath $ExpectedTargetPath `
+        -ExpectedInfoClasses $ExpectedInfoClasses
+
+    if ($null -eq $matchedEvent) {
+        throw "Blocked file telemetry validation failed for mutation: $Name"
+    }
+
+    return [pscustomobject]@{
+        Mutation = $Name
+        Error = $operationError
+        ProcessId = [int]$matchedEvent.process_id
+        ProcessName = [string]$matchedEvent.process_name
+        RuleId = [string]$matchedEvent.rule_id
+        TargetPath = [string]$matchedEvent.target_path
+        InfoClass = [string]$matchedEvent.info_class
+    }
 }
 
 $resolvedEventPath = Resolve-EventLogPath -PreferredPath $EventPath
@@ -116,47 +210,29 @@ New-Item -ItemType Directory -Force -Path $ScratchRoot | Out-Null
 $scratchCopyPath = Join-Path $ScratchRoot 'DriverModule.copy.sys'
 Remove-Item -LiteralPath $scratchCopyPath -Force -ErrorAction SilentlyContinue
 
-$baselineEvents = Read-JsonLines -Path $resolvedEventPath
-$baselineCount = $baselineEvents.Count
-
 Write-Step "Copying protected driver to scratch path: $scratchCopyPath"
 Copy-Item -LiteralPath $ProtectedDriverPath -Destination $scratchCopyPath -Force
 
-$overwriteBlocked = $false
-$overwriteError = ''
-Write-Step 'Attempting overwrite against the protected driver image'
-try {
-    Copy-Item -LiteralPath $scratchCopyPath -Destination $ProtectedDriverPath -Force -ErrorAction Stop
-}
-catch {
-    $overwriteBlocked = $true
-    $overwriteError = $_.Exception.Message
-}
-
-if (-not $overwriteBlocked) {
-    throw 'Protected driver overwrite unexpectedly succeeded.'
-}
-
-$matchedEvent = $null
-$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-while ((Get-Date) -lt $deadline) {
-    $allEvents = Read-JsonLines -Path $resolvedEventPath
-    $newEvents = if ($allEvents.Count -gt $baselineCount) {
-        @($allEvents | Select-Object -Skip $baselineCount)
+$renameTargetName = 'DriverModule.renamed-test.sys'
+$results = @(
+    Invoke-BlockedMutationValidation -Name 'overwrite_copy' -ExpectedTargetPath $ProtectedDriverPath -Action {
+        Copy-Item -LiteralPath $scratchCopyPath -Destination $ProtectedDriverPath -Force -ErrorAction Stop
     }
-    else {
-        @()
+    Invoke-BlockedMutationValidation -Name 'rename_item' -ExpectedTargetPath $ProtectedDriverPath -ExpectedInfoClasses @(
+        'FileRenameInformation',
+        'FileRenameInformationEx'
+    ) -Action {
+        Rename-Item -LiteralPath $ProtectedDriverPath -NewName $renameTargetName -ErrorAction Stop
     }
-
-    $matchedEvent = Find-BlockedFileEvent -Events $newEvents -ExpectedTargetPath $ProtectedDriverPath
-    if ($null -ne $matchedEvent) {
-        break
+    Invoke-BlockedMutationValidation -Name 'delete_item' -ExpectedTargetPath $ProtectedDriverPath -ExpectedInfoClasses @(
+        'FileDispositionInformation',
+        'FileDispositionInformationEx'
+    ) -Action {
+        Remove-Item -LiteralPath $ProtectedDriverPath -Force -ErrorAction Stop
     }
+)
 
-    Start-Sleep -Milliseconds $PollIntervalMs
-}
-
-if ($null -eq $matchedEvent) {
+if ($results.Count -lt 3) {
     $recentEvents = Read-JsonLines -Path $resolvedEventPath |
         Where-Object { [string]$_.driver_event_name -eq 'blocked_file_operation' } |
         Select-Object -Last 5
@@ -173,14 +249,9 @@ if ($null -eq $matchedEvent) {
 }
 
 Write-Host ''
-[pscustomobject]@{
-    ProtectedDriverPath = $ProtectedDriverPath
-    OverwriteError = $overwriteError
-    ProcessId = [int]$matchedEvent.process_id
-    ProcessName = [string]$matchedEvent.process_name
-    RuleId = [string]$matchedEvent.rule_id
-    TargetPath = [string]$matchedEvent.target_path
-} | Format-Table -AutoSize
+$results |
+    Select-Object Mutation, ProcessId, ProcessName, RuleId, InfoClass, TargetPath, Error |
+    Format-Table -AutoSize
 
 Write-Host ''
 Write-Success 'HostGuard file self-protection telemetry validated successfully.'
