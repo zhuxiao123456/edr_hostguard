@@ -16,6 +16,7 @@ bool InstallWin32Service(
 bool StartWin32Service(const std::wstring& serviceName);
 bool StopWin32Service(const std::wstring& serviceName);
 bool RemoveWin32Service(const std::wstring& serviceName);
+bool EnsureFreshKernelDriverInstall(const std::wstring& driverPath, const std::wstring& serviceName);
 bool LoadKernelDriver(const std::wstring& driverPath, const std::wstring& serviceName);
 bool UnloadKernelDriver(const std::wstring& serviceName);
 

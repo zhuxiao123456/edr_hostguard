@@ -1,9 +1,16 @@
 ﻿#include "DriverUtils.h"
+#include <bcrypt.h>
 #include <iostream>
+#include <new>
 #include <setupapi.h>
 #include "Shared.h"
 
+#pragma comment(lib, "Bcrypt.lib")
 #pragma comment(lib, "Setupapi.lib")
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
 
 namespace {
     const wchar_t kFilterLoadOrderGroup[] = L"FSFilter Activity Monitor";
@@ -297,6 +304,132 @@ namespace {
 
         InstallHinfSectionW(NULL, NULL, commandLine.c_str(), 0);
         return true;
+    }
+
+    bool EqualsIgnoreCase(const std::wstring& left, const std::wstring& right) {
+        return _wcsicmp(left.c_str(), right.c_str()) == 0;
+    }
+
+    bool ComputeFileSha256Hex(const std::wstring& filePath, std::wstring& outHash) {
+        outHash.clear();
+
+        HANDLE hFile = CreateFileW(
+            filePath.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE algorithmHandle = NULL;
+        BCRYPT_HASH_HANDLE hashHandle = NULL;
+        PUCHAR hashObject = NULL;
+        PUCHAR hashBuffer = NULL;
+        DWORD hashObjectLength = 0;
+        DWORD hashLength = 0;
+        ULONG bytesCopied = 0;
+        NTSTATUS status = BCryptOpenAlgorithmProvider(&algorithmHandle, BCRYPT_SHA256_ALGORITHM, NULL, 0);
+        if (NT_SUCCESS(status)) {
+            status = BCryptGetProperty(
+                algorithmHandle,
+                BCRYPT_OBJECT_LENGTH,
+                reinterpret_cast<PUCHAR>(&hashObjectLength),
+                sizeof(hashObjectLength),
+                &bytesCopied,
+                0);
+        }
+        if (NT_SUCCESS(status)) {
+            status = BCryptGetProperty(
+                algorithmHandle,
+                BCRYPT_HASH_LENGTH,
+                reinterpret_cast<PUCHAR>(&hashLength),
+                sizeof(hashLength),
+                &bytesCopied,
+                0);
+        }
+        if (NT_SUCCESS(status)) {
+            hashObject = new (std::nothrow) UCHAR[hashObjectLength];
+            hashBuffer = new (std::nothrow) UCHAR[hashLength];
+            if (hashObject == NULL || hashBuffer == NULL) {
+                status = STATUS_NO_MEMORY;
+            }
+        }
+        if (NT_SUCCESS(status)) {
+            status = BCryptCreateHash(
+                algorithmHandle,
+                &hashHandle,
+                hashObject,
+                hashObjectLength,
+                NULL,
+                0,
+                0);
+        }
+
+        BYTE readBuffer[4096] = {};
+        while (NT_SUCCESS(status)) {
+            DWORD bytesRead = 0;
+            if (!ReadFile(hFile, readBuffer, sizeof(readBuffer), &bytesRead, NULL)) {
+                status = HRESULT_FROM_WIN32(GetLastError());
+                break;
+            }
+
+            if (bytesRead == 0) {
+                break;
+            }
+
+            status = BCryptHashData(hashHandle, readBuffer, bytesRead, 0);
+        }
+
+        if (NT_SUCCESS(status)) {
+            status = BCryptFinishHash(hashHandle, hashBuffer, hashLength, 0);
+        }
+
+        if (NT_SUCCESS(status)) {
+            static const wchar_t kHexDigits[] = L"0123456789ABCDEF";
+            outHash.reserve(hashLength * 2);
+            for (DWORD index = 0; index < hashLength; ++index) {
+                outHash.push_back(kHexDigits[(hashBuffer[index] >> 4) & 0x0F]);
+                outHash.push_back(kHexDigits[hashBuffer[index] & 0x0F]);
+            }
+        }
+
+        if (hashHandle != NULL) {
+            BCryptDestroyHash(hashHandle);
+        }
+        if (algorithmHandle != NULL) {
+            BCryptCloseAlgorithmProvider(algorithmHandle, 0);
+        }
+
+        delete[] hashObject;
+        delete[] hashBuffer;
+        CloseHandle(hFile);
+        return NT_SUCCESS(status);
+    }
+
+    bool DeleteStaleDriverBinary(const std::wstring& resolvedServiceBinaryPath, const std::wstring& driverPath) {
+        if (resolvedServiceBinaryPath.empty() ||
+            EqualsIgnoreCase(resolvedServiceBinaryPath, driverPath) ||
+            !IsFileExists(resolvedServiceBinaryPath)) {
+            return true;
+        }
+
+        if (DeleteFileW(resolvedServiceBinaryPath.c_str())) {
+            std::wcout << L"[*] 已删除旧驱动文件: " << resolvedServiceBinaryPath << std::endl;
+            return true;
+        }
+
+        const DWORD errorCode = GetLastError();
+        if (errorCode == ERROR_FILE_NOT_FOUND || errorCode == ERROR_PATH_NOT_FOUND) {
+            return true;
+        }
+
+        std::wcerr << L"[-] 错误：删除旧驱动文件失败 (错误码: " << errorCode
+                   << L")，路径: " << resolvedServiceBinaryPath << std::endl;
+        return false;
     }
 }
 
@@ -592,6 +725,75 @@ static bool UninstallKernelDriverViaInf(
     return !serviceExists;
 }
 
+bool EnsureFreshKernelDriverInstall(const std::wstring& driverPath, const std::wstring& serviceName) {
+    DWORD serviceState = SERVICE_STOPPED;
+    bool serviceExists = false;
+    if (!QueryKernelDriverServiceState(serviceName, serviceState, serviceExists)) {
+        return false;
+    }
+
+    if (!serviceExists) {
+        return true;
+    }
+
+    std::wstring localDriverHash;
+    if (!ComputeFileSha256Hex(driverPath, localDriverHash)) {
+        std::wcerr << L"[-] 错误：计算本地驱动哈希失败，路径: " << driverPath << std::endl;
+        return false;
+    }
+
+    SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
+    if (!hSCManager) {
+        std::wcerr << L"[-] 错误：无法打开服务控制管理器 (错误码: " << GetLastError() << L")" << std::endl;
+        return false;
+    }
+
+    SC_HANDLE hService = OpenServiceW(hSCManager, serviceName.c_str(), SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS);
+    if (!hService) {
+        std::wcerr << L"[-] 错误：打开现有驱动服务失败 (错误码: " << GetLastError() << L")" << std::endl;
+        CloseServiceHandle(hSCManager);
+        return false;
+    }
+
+    const std::wstring serviceBinaryPath = QueryServiceBinaryPath(hService);
+    const std::wstring resolvedServiceBinaryPath = ResolveServiceBinaryPath(serviceBinaryPath);
+    CloseServiceHandle(hService);
+    CloseServiceHandle(hSCManager);
+
+    bool forceRefresh = resolvedServiceBinaryPath.empty() || !IsFileExists(resolvedServiceBinaryPath);
+    std::wstring existingDriverHash;
+    if (!forceRefresh) {
+        if (!ComputeFileSha256Hex(resolvedServiceBinaryPath, existingDriverHash)) {
+            std::wcerr << L"[!] 警告：计算已安装驱动哈希失败，将执行强制清理。路径: "
+                       << resolvedServiceBinaryPath << std::endl;
+            forceRefresh = true;
+        }
+        else if (!EqualsIgnoreCase(existingDriverHash, localDriverHash)) {
+            std::wcout << L"[*] 检测到旧驱动 Hash mismatch，准备清理并重装。当前="
+                       << existingDriverHash << L"，目标=" << localDriverHash << std::endl;
+            forceRefresh = true;
+        }
+    }
+
+    if (!forceRefresh) {
+        return true;
+    }
+
+    const std::wstring preferredInfPath = FindSiblingDriverInfPath(driverPath);
+    if (!preferredInfPath.empty()) {
+        if (!UninstallKernelDriverViaInf(preferredInfPath, serviceName)) {
+            std::wcerr << L"[!] 警告：通过 INF 清理旧驱动失败，将回退到服务删除路径。INF: "
+                       << preferredInfPath << std::endl;
+        }
+    }
+
+    if (!RemoveWin32Service(serviceName)) {
+        return false;
+    }
+
+    return DeleteStaleDriverBinary(resolvedServiceBinaryPath, driverPath);
+}
+
 bool LoadKernelDriver(const std::wstring& driverPath, const std::wstring& serviceName) {
     if (!IsRunAsAdmin()) {
         std::wcerr << L"[-] 错误：加载驱动需要管理员权限！" << std::endl;
@@ -600,6 +802,10 @@ bool LoadKernelDriver(const std::wstring& driverPath, const std::wstring& servic
 
     if (!IsFileExists(driverPath)) {
         std::wcerr << L"[-] 错误：驱动文件不存在，无法注册服务！路径: " << driverPath << std::endl;
+        return false;
+    }
+
+    if (!EnsureFreshKernelDriverInstall(driverPath, serviceName)) {
         return false;
     }
 
