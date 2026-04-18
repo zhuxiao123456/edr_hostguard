@@ -11,6 +11,7 @@ param(
     [switch]$SkipRuntimeCounters,
     [switch]$SkipRegistryBatchSync,
     [switch]$SkipRegistryRuleScale,
+    [switch]$SkipRegistryRuleOrder,
     [switch]$SkipRegistryRollback,
     [switch]$SkipRegistryInterop,
     [switch]$SkipLifecycleStress,
@@ -196,6 +197,7 @@ $targetProcessObservedScript = Join-Path $TargetRoot 'ProcessObservedTests.ps1'
 $targetRuntimeCountersScript = Join-Path $TargetRoot 'StatusRuntimeCountersTests.ps1'
 $targetRegistryBatchSyncScript = Join-Path $TargetRoot 'RegistryBatchSyncTests.ps1'
 $targetRegistryRuleScaleScript = Join-Path $TargetRoot 'RegistryRuleScaleTests.ps1'
+$targetRegistryRuleOrderScript = Join-Path $TargetRoot 'RegistryRuleOrderTests.ps1'
 $targetRegistryRollbackScript = Join-Path $TargetRoot 'RegistryRollbackTests.ps1'
 $targetRegistryInteropScript = Join-Path $TargetRoot 'RegistryInteropTests.ps1'
 $targetLifecycleStressScript = Join-Path $TargetRoot 'LifecycleStressTests.ps1'
@@ -218,10 +220,11 @@ if ($PlanOnly) {
     Write-Host '7. Optional StatusRuntimeCountersTests.ps1'
     Write-Host '8. Optional RegistryBatchSyncTests.ps1'
     Write-Host '9. Optional RegistryRuleScaleTests.ps1'
-    Write-Host '10. Optional RegistryRollbackTests.ps1'
-    Write-Host '11. Optional RegistryInteropTests.ps1'
-    Write-Host '12. Optional LifecycleStressTests.ps1'
-    Write-Host '13. Optional stop/uninstall cleanup'
+    Write-Host '10. Optional RegistryRuleOrderTests.ps1'
+    Write-Host '11. Optional RegistryRollbackTests.ps1'
+    Write-Host '12. Optional RegistryInteropTests.ps1'
+    Write-Host '13. Optional LifecycleStressTests.ps1'
+    Write-Host '14. Optional stop/uninstall cleanup'
     return
 }
 
@@ -299,6 +302,16 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetRegistryRuleScaleScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running registry dynamic-scale hot reload regression'
+    }
+
+    if (-not $SkipRegistryRuleOrder) {
+        if (-not (Test-Path $targetRegistryRuleOrderScript)) {
+            throw "RegistryRuleOrderTests.ps1 not found at target path: $targetRegistryRuleOrderScript"
+        }
+
+        Invoke-PowerShellFile -ScriptPath $targetRegistryRuleOrderScript -Arguments @(
+            '-HostGuardPath', $targetHostGuardExe
+        ) -Description 'Running registry rule order regression'
     }
 
     if (-not $SkipRegistryRollback) {
