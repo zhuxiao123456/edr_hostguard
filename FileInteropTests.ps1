@@ -1,102 +1,186 @@
 param(
-    [string]$BlockedBasePath = "C:\Temp\HostGuardInterop",
-    [string]$GeneralSysPath = "C:\Temp\HostGuardAny\global_block.sys"
+    [string]$ProtectedDriverPath = 'C:\Windows\System32\drivers\DriverModule.sys',
+    [string]$ScratchRoot = 'C:\Temp\HostGuardFileInterop',
+    [string]$EventPath = '',
+    [int]$TimeoutSeconds = 20,
+    [int]$PollIntervalMs = 250
 )
 
-$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-function Invoke-ExpectBlocked {
-    param(
-        [string]$Name,
-        [scriptblock]$Action
+function Write-Step {
+    param([string]$Message)
+    Write-Host "[*] $Message" -ForegroundColor Cyan
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host "[+] $Message" -ForegroundColor Green
+}
+
+function Resolve-EventLogPath {
+    param([string]$PreferredPath)
+
+    if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
+        return $PreferredPath
+    }
+
+    $candidates = @(
+        'C:\ProgramData\HostGuard\events.jsonl',
+        'C:\ransomware\events.jsonl'
     )
 
-    Write-Host "==== $Name ===="
-    try {
-        & $Action
-        Write-Host "[UNEXPECTED] operation succeeded"
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
     }
-    catch {
-        Write-Host "[BLOCKED] $($_.Exception.Message)"
+
+    if (Test-Path 'C:\ProgramData\HostGuard') {
+        return 'C:\ProgramData\HostGuard\events.jsonl'
     }
-    Write-Host
+
+    return 'C:\ransomware\events.jsonl'
 }
 
-function Invoke-ExpectAllowed {
+function Read-JsonLines {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return @()
+    }
+
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($line in Get-Content $Path -ErrorAction SilentlyContinue) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        $normalizedLine = $line
+        if ($normalizedLine.Length -gt 0 -and $normalizedLine[0] -eq [char]0xFEFF) {
+            $normalizedLine = $normalizedLine.Substring(1)
+        }
+
+        try {
+            $events.Add(($normalizedLine | ConvertFrom-Json -ErrorAction Stop))
+        }
+        catch {
+        }
+    }
+
+    return $events
+}
+
+function Find-BlockedFileEvent {
     param(
-        [string]$Name,
-        [scriptblock]$Action
+        [object[]]$Events,
+        [string]$ExpectedTargetPath
     )
 
-    Write-Host "==== $Name ===="
-    try {
-        & $Action
-        Write-Host "[ALLOWED] completed successfully"
+    foreach ($event in $Events) {
+        if ($null -eq $event) {
+            continue
+        }
+
+        if ([string]$event.event_type -ne 'blocked_file_operation') {
+            continue
+        }
+
+        if ([string]$event.driver_event_name -ne 'blocked_file_operation') {
+            continue
+        }
+
+        if ([string]$event.rule_id -ne 'driver_self_protection') {
+            continue
+        }
+
+        if (-not ([string]$event.target_path).Equals($ExpectedTargetPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        return $event
     }
-    catch {
-        Write-Host "[UNEXPECTED] operation failed: $($_.Exception.Message)"
+
+    return $null
+}
+
+$resolvedEventPath = Resolve-EventLogPath -PreferredPath $EventPath
+Write-Step "Using event log path: $resolvedEventPath"
+
+if (-not (Test-Path -LiteralPath $ProtectedDriverPath)) {
+    throw "Protected driver path not found: $ProtectedDriverPath"
+}
+
+New-Item -ItemType Directory -Force -Path $ScratchRoot | Out-Null
+$scratchCopyPath = Join-Path $ScratchRoot 'DriverModule.copy.sys'
+Remove-Item -LiteralPath $scratchCopyPath -Force -ErrorAction SilentlyContinue
+
+$baselineEvents = Read-JsonLines -Path $resolvedEventPath
+$baselineCount = $baselineEvents.Count
+
+Write-Step "Copying protected driver to scratch path: $scratchCopyPath"
+Copy-Item -LiteralPath $ProtectedDriverPath -Destination $scratchCopyPath -Force
+
+$overwriteBlocked = $false
+$overwriteError = ''
+Write-Step 'Attempting overwrite against the protected driver image'
+try {
+    Copy-Item -LiteralPath $scratchCopyPath -Destination $ProtectedDriverPath -Force -ErrorAction Stop
+}
+catch {
+    $overwriteBlocked = $true
+    $overwriteError = $_.Exception.Message
+}
+
+if (-not $overwriteBlocked) {
+    throw 'Protected driver overwrite unexpectedly succeeded.'
+}
+
+$matchedEvent = $null
+$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+while ((Get-Date) -lt $deadline) {
+    $allEvents = Read-JsonLines -Path $resolvedEventPath
+    $newEvents = if ($allEvents.Count -gt $baselineCount) {
+        @($allEvents | Select-Object -Skip $baselineCount)
     }
-    Write-Host
-}
-
-function Ensure-Directory {
-    param([string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    else {
+        @()
     }
-}
 
-function Remove-IfExists {
-    param([string]$Path)
-
-    if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue
+    $matchedEvent = Find-BlockedFileEvent -Events $newEvents -ExpectedTargetPath $ProtectedDriverPath
+    if ($null -ne $matchedEvent) {
+        break
     }
+
+    Start-Sleep -Milliseconds $PollIntervalMs
 }
 
-$blockedDirParent = Split-Path -Path $BlockedBasePath -Parent
-$generalSysParent = Split-Path -Path $GeneralSysPath -Parent
+if ($null -eq $matchedEvent) {
+    $recentEvents = Read-JsonLines -Path $resolvedEventPath |
+        Where-Object { [string]$_.driver_event_name -eq 'blocked_file_operation' } |
+        Select-Object -Last 5
 
-Ensure-Directory -Path $blockedDirParent
-Ensure-Directory -Path $generalSysParent
-Ensure-Directory -Path $BlockedBasePath
-
-Remove-IfExists -Path "$BlockedBasePath\allowed.txt"
-Remove-IfExists -Path "$BlockedBasePath\blocked_from_pwsh.exe"
-Remove-IfExists -Path "$BlockedBasePath\blocked_from_pwsh.dll"
-Remove-IfExists -Path "$BlockedBasePath\blocked_from_pwsh.sys"
-Remove-IfExists -Path "$BlockedBasePath\blocked_from_cmd.exe"
-Remove-IfExists -Path $GeneralSysPath
-
-Invoke-ExpectAllowed "allowed_txt_from_powershell" {
-    Set-Content -LiteralPath "$BlockedBasePath\allowed.txt" -Value "safe-text" -Encoding ASCII -Force
-}
-
-Invoke-ExpectBlocked "blocked_sys_anywhere_from_powershell" {
-    Set-Content -LiteralPath $GeneralSysPath -Value "fake-sys" -Encoding ASCII -Force
-}
-
-Invoke-ExpectBlocked "blocked_exe_from_powershell_in_interop_dir" {
-    Set-Content -LiteralPath "$BlockedBasePath\blocked_from_pwsh.exe" -Value "fake-exe" -Encoding ASCII -Force
-}
-
-Invoke-ExpectBlocked "blocked_dll_from_powershell_in_interop_dir" {
-    Set-Content -LiteralPath "$BlockedBasePath\blocked_from_pwsh.dll" -Value "fake-dll" -Encoding ASCII -Force
-}
-
-Invoke-ExpectBlocked "blocked_sys_from_powershell_in_interop_dir" {
-    Set-Content -LiteralPath "$BlockedBasePath\blocked_from_pwsh.sys" -Value "fake-sys" -Encoding ASCII -Force
-}
-
-Invoke-ExpectBlocked "blocked_exe_from_cmd_in_interop_dir" {
-    cmd.exe /c "echo fake-cmd-exe> `"$BlockedBasePath\blocked_from_cmd.exe`""
-    if ($LASTEXITCODE -ne 0) {
-        throw "cmd exit code $LASTEXITCODE"
+    if ($recentEvents.Count -gt 0) {
+        Write-Host ''
+        Write-Host '[*] Recent blocked_file_operation events:' -ForegroundColor Cyan
+        $recentEvents |
+            Select-Object time, process_id, process_name, rule_id, target_path |
+            Format-Table -AutoSize
     }
-    if (Test-Path -LiteralPath "$BlockedBasePath\blocked_from_cmd.exe") {
-        throw "cmd.exe created the file unexpectedly"
-    }
+
+    throw 'Blocked file telemetry validation failed.'
 }
 
-Write-Host "File interop test sequence finished."
+Write-Host ''
+[pscustomobject]@{
+    ProtectedDriverPath = $ProtectedDriverPath
+    OverwriteError = $overwriteError
+    ProcessId = [int]$matchedEvent.process_id
+    ProcessName = [string]$matchedEvent.process_name
+    RuleId = [string]$matchedEvent.rule_id
+    TargetPath = [string]$matchedEvent.target_path
+} | Format-Table -AutoSize
+
+Write-Host ''
+Write-Success 'HostGuard file self-protection telemetry validated successfully.'

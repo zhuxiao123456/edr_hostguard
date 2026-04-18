@@ -25,6 +25,7 @@ namespace {
     const wchar_t kHostGuardServiceName[] = L"HostGuard";
     const wchar_t kHostGuardDisplayName[] = L"HostGuard Endpoint Protection";
     const wchar_t kDriverServiceName[] = L"PebMonitor";
+    const wchar_t kDriverSelfProtectionRuleId[] = L"driver_self_protection";
 
     HANDLE g_StopEvent = NULL;
     HANDLE g_ShutdownCompleteEvent = NULL;
@@ -309,6 +310,8 @@ namespace {
             return L"observed_process_create";
         case DRIVER_EVENT_TYPE_RESPONSE_ACTION:
             return L"response_action";
+        case DRIVER_EVENT_TYPE_BLOCKED_FILE_OPERATION:
+            return L"blocked_file_operation";
         default:
             return L"unknown_driver_event";
         }
@@ -2044,6 +2047,14 @@ static void HandleDriverEventPayload(const DRIVER_EVENT& driverEvent) {
     std::wstring responseStatusText = FormatNtStatusHex(driverEvent.ResponseStatus);
     bool responseSucceeded = driverEvent.ResponseStatus >= 0;
     const bool isObservedProcessCreate = (driverEvent.EventType == DRIVER_EVENT_TYPE_OBSERVED_PROCESS_CREATE);
+    const bool isBlockedFileOperation = (driverEvent.EventType == DRIVER_EVENT_TYPE_BLOCKED_FILE_OPERATION);
+    const bool isDriverSelfProtection =
+        isBlockedFileOperation &&
+        !ruleId.empty() &&
+        _wcsicmp(ruleId.c_str(), kDriverSelfProtectionRuleId) == 0;
+    const bool isRegistryDriverEvent =
+        (driverEvent.EventType == DRIVER_EVENT_TYPE_BLOCKED_REGISTRY_OPERATION) ||
+        (driverEvent.EventType == DRIVER_EVENT_TYPE_OBSERVED_REGISTRY_OPERATION);
     const std::wstring driverEventTypeName = DriverEventTypeToString(driverEvent.EventType);
     std::wstring parentProcessName;
 
@@ -2145,6 +2156,24 @@ static void HandleDriverEventPayload(const DRIVER_EVENT& driverEvent) {
             LogMessage(L"    └─ 命令行: " + commandLine);
         }
     }
+    else if (isBlockedFileOperation) {
+        LogMessage(L"[!] 已阻止对受保护驱动文件的写入或删除访问。");
+        if (isDriverSelfProtection) {
+            LogMessage(L"    └─ 保护类别: driver_self_protection");
+        }
+        if (!ruleId.empty()) {
+            LogMessage(L"    └─ 规则 ID: " + ruleId);
+        }
+        if (severity > 0) {
+            LogMessage(L"    └─ Severity: " + std::to_wstring(severity));
+        }
+        if (!processName.empty()) {
+            LogMessage(L"    └─ 发起进程: " + processName + L" (PID: " + std::to_wstring(driverEvent.ProcessId) + L")");
+        }
+        if (!targetPath.empty()) {
+            LogMessage(L"    └─ 受保护文件: " + targetPath);
+        }
+    }
     else if (driverEvent.EventType == DRIVER_EVENT_TYPE_RESPONSE_ACTION) {
         LogMessage(responseSucceeded
             ? L"[+] 驱动响应动作执行成功。"
@@ -2161,7 +2190,8 @@ static void HandleDriverEventPayload(const DRIVER_EVENT& driverEvent) {
     }
 
     json driverEventJson = BuildBaseJsonEvent(
-        isObservedProcessCreate ? "observed_process_create" : "driver_event",
+        isObservedProcessCreate ? "observed_process_create" :
+        (isBlockedFileOperation ? "blocked_file_operation" : "driver_event"),
         (driverEvent.EventType == DRIVER_EVENT_TYPE_RESPONSE_ACTION && responseSucceeded) ? "info" :
         (isObservedProcessCreate ? "info" : "warn"));
     driverEventJson["driver_event_type"] = driverEvent.EventType;
@@ -2185,8 +2215,15 @@ static void HandleDriverEventPayload(const DRIVER_EVENT& driverEvent) {
             driverEventJson["command_line"] = WStringToUtf8(commandLine);
         }
     }
-    else {
+    else if (isRegistryDriverEvent) {
         driverEventJson["registry_operation"] = WStringToUtf8(registryOperation);
+    }
+    else if (isBlockedFileOperation) {
+        driverEventJson["protected_file_operation"] = true;
+        if (isDriverSelfProtection) {
+            driverEventJson["self_protection"] = true;
+            driverEventJson["protection_scope"] = "driver_self_protection";
+        }
     }
     if (!processName.empty()) {
         driverEventJson["process_name"] = WStringToUtf8(processName);
