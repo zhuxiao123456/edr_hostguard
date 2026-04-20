@@ -9,6 +9,7 @@ param(
     [switch]$SkipCertificateImport,
     [switch]$SkipProcessObserved,
     [switch]$SkipFileInterop,
+    [switch]$SkipFileProtectionCounters,
     [switch]$SkipRuntimeCounters,
     [switch]$SkipRegistryBatchSync,
     [switch]$SkipRegistryRuleScale,
@@ -196,6 +197,7 @@ $targetHostGuardExe = Join-Path $TargetRoot 'HostGuard.exe'
 $targetCertPath = Join-Path $TargetRoot 'DriverModule.cer'
 $targetProcessObservedScript = Join-Path $TargetRoot 'ProcessObservedTests.ps1'
 $targetFileInteropScript = Join-Path $TargetRoot 'FileInteropTests.ps1'
+$targetFileProtectionCounterScript = Join-Path $TargetRoot 'FileProtectionRuntimeCountersTests.ps1'
 $targetRuntimeCountersScript = Join-Path $TargetRoot 'StatusRuntimeCountersTests.ps1'
 $targetRegistryBatchSyncScript = Join-Path $TargetRoot 'RegistryBatchSyncTests.ps1'
 $targetRegistryRuleScaleScript = Join-Path $TargetRoot 'RegistryRuleScaleTests.ps1'
@@ -220,14 +222,15 @@ if ($PlanOnly) {
     Write-Host '5. Wait for status --json ready state'
     Write-Host '6. Optional ProcessObservedTests.ps1'
     Write-Host '7. Optional FileInteropTests.ps1'
-    Write-Host '8. Optional StatusRuntimeCountersTests.ps1'
-    Write-Host '9. Optional RegistryBatchSyncTests.ps1'
-    Write-Host '10. Optional RegistryRuleScaleTests.ps1'
-    Write-Host '11. Optional RegistryRuleOrderTests.ps1'
-    Write-Host '12. Optional RegistryRollbackTests.ps1'
-    Write-Host '13. Optional RegistryInteropTests.ps1'
-    Write-Host '14. Optional LifecycleStressTests.ps1'
-    Write-Host '15. Optional stop/uninstall cleanup'
+    Write-Host '8. Optional FileProtectionRuntimeCountersTests.ps1'
+    Write-Host '9. Optional StatusRuntimeCountersTests.ps1'
+    Write-Host '10. Optional RegistryBatchSyncTests.ps1'
+    Write-Host '11. Optional RegistryRuleScaleTests.ps1'
+    Write-Host '12. Optional RegistryRuleOrderTests.ps1'
+    Write-Host '13. Optional RegistryRollbackTests.ps1'
+    Write-Host '14. Optional RegistryInteropTests.ps1'
+    Write-Host '15. Optional LifecycleStressTests.ps1'
+    Write-Host '16. Optional stop/uninstall cleanup'
     return
 }
 
@@ -282,6 +285,16 @@ try {
         }
 
         Invoke-PowerShellFile -ScriptPath $targetFileInteropScript -Arguments @() -Description 'Running protected-file interop regression'
+    }
+
+    if (-not $SkipFileProtectionCounters) {
+        if (-not (Test-Path $targetFileProtectionCounterScript)) {
+            throw "FileProtectionRuntimeCountersTests.ps1 not found at target path: $targetFileProtectionCounterScript"
+        }
+
+        Invoke-PowerShellFile -ScriptPath $targetFileProtectionCounterScript -Arguments @(
+            '-HostGuardPath', $targetHostGuardExe
+        ) -Description 'Running file-protection runtime counter regression'
     }
 
     if (-not $SkipRuntimeCounters) {
