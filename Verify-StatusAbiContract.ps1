@@ -42,7 +42,11 @@ $requiredRuntimeStatusFields = @(
     'CacheHitCount',
     'CacheMissCount',
     'CacheFlushCount',
-    'SlowPathCount'
+    'SlowPathCount',
+    'FileProtectionBlockCount',
+    'FileProtectionCreateBlockCount',
+    'FileProtectionSetInformationBlockCount',
+    'LastFileProtectionInfoClass'
 )
 
 foreach ($field in $requiredRuntimeStatusFields) {
@@ -87,6 +91,22 @@ if ($hostGuardText -notmatch 'slow_path_count') {
     throw 'HostGuard JSON status output must include slow_path_count.'
 }
 
+if ($hostGuardText -notmatch 'file_protection_block_count') {
+    throw 'HostGuard JSON status output must include file_protection_block_count.'
+}
+
+if ($hostGuardText -notmatch 'file_protection_create_block_count') {
+    throw 'HostGuard JSON status output must include file_protection_create_block_count.'
+}
+
+if ($hostGuardText -notmatch 'file_protection_set_information_block_count') {
+    throw 'HostGuard JSON status output must include file_protection_set_information_block_count.'
+}
+
+if ($hostGuardText -notmatch 'last_file_protection_info_class') {
+    throw 'HostGuard JSON status output must include last_file_protection_info_class.'
+}
+
 $requiredJsonFields = @(
     'registry_rule_classes',
     'registry_allow_rule_classes',
@@ -97,7 +117,11 @@ $requiredJsonFields = @(
     'status.RegistryAllowRuleExactCount',
     'status.RegistryAllowRulePrefixCount',
     'status.RegistryAllowRuleSuffixCount',
-    'status.RegistryAllowRuleContainsCount'
+    'status.RegistryAllowRuleContainsCount',
+    'status.FileProtectionBlockCount',
+    'status.FileProtectionCreateBlockCount',
+    'status.FileProtectionSetInformationBlockCount',
+    'status.LastFileProtectionInfoClass'
 )
 
 foreach ($field in $requiredJsonFields) {

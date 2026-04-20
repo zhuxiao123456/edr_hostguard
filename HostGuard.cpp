@@ -527,6 +527,10 @@ namespace {
         driverStatus["cache_miss_count"] = status.CacheMissCount;
         driverStatus["cache_flush_count"] = status.CacheFlushCount;
         driverStatus["slow_path_count"] = status.SlowPathCount;
+        driverStatus["file_protection_block_count"] = status.FileProtectionBlockCount;
+        driverStatus["file_protection_create_block_count"] = status.FileProtectionCreateBlockCount;
+        driverStatus["file_protection_set_information_block_count"] = status.FileProtectionSetInformationBlockCount;
+        driverStatus["last_file_protection_info_class"] = WStringToUtf8(status.LastFileProtectionInfoClass);
 
         if (status.ConfigVersion[0] != L'\0') {
             driverStatus["config_version"] = WStringToUtf8(status.ConfigVersion);
@@ -573,6 +577,13 @@ namespace {
             L", 驱动事件队列=" + std::to_wstring(status.DriverEventQueueCount) +
             L", 事件丢弃=" + std::to_wstring(status.DriverEventDropCount) +
             L", 分配失败=" + std::to_wstring(status.DriverEventAllocFailCount));
+
+        LogMessage(
+            L"[+] 文件保护状态: 阻断总数=" + std::to_wstring(status.FileProtectionBlockCount) +
+            L", create阻断=" + std::to_wstring(status.FileProtectionCreateBlockCount) +
+            L", setinfo阻断=" + std::to_wstring(status.FileProtectionSetInformationBlockCount) +
+            L", 最近类型=" +
+            std::wstring(status.LastFileProtectionInfoClass[0] != L'\0' ? status.LastFileProtectionInfoClass : L"<none>"));
 
         LogMessage(
             L"[+] 进程裁决链路: connected=" +

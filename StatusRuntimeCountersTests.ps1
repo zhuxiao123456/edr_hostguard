@@ -116,6 +116,10 @@ function Write-CounterSnapshot {
         CacheMisses = Get-RequiredUInt64 -Object $DriverStatus -PropertyName 'cache_miss_count'
         CacheFlushes = Get-RequiredUInt64 -Object $DriverStatus -PropertyName 'cache_flush_count'
         SlowPath = Get-RequiredUInt64 -Object $DriverStatus -PropertyName 'slow_path_count'
+        FileProtectionBlocks = Get-RequiredUInt64 -Object $DriverStatus -PropertyName 'file_protection_block_count'
+        FileProtectionCreateBlocks = Get-RequiredUInt64 -Object $DriverStatus -PropertyName 'file_protection_create_block_count'
+        FileProtectionSetInfoBlocks = Get-RequiredUInt64 -Object $DriverStatus -PropertyName 'file_protection_set_information_block_count'
+        LastFileProtectionInfoClass = [string](Get-JsonPropertyValue -Object $DriverStatus -PropertyName 'last_file_protection_info_class')
     } | Format-Table -AutoSize
 }
 
@@ -149,7 +153,11 @@ $requiredDriverStatusProperties = @(
     'cache_miss_count',
     'cache_flush_count',
     'slow_path_count',
-    'process_verdict_request_count'
+    'process_verdict_request_count',
+    'file_protection_block_count',
+    'file_protection_create_block_count',
+    'file_protection_set_information_block_count',
+    'last_file_protection_info_class'
 )
 
 foreach ($propertyName in $requiredDriverStatusProperties) {
