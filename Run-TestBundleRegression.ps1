@@ -89,15 +89,78 @@ function Write-RegressionSummary {
 
     Write-Host ''
     Write-Host 'Regression summary:' -ForegroundColor Cyan
-    $Results.GetEnumerator() |
-        ForEach-Object {
-            [pscustomobject]@{
-                Test = $_.Key
-                Status = [string]$_.Value.Status
-                Detail = [string]$_.Value.Detail
-            }
-        } |
+    Get-RegressionSummaryRows -Results $Results |
         Format-Table -AutoSize
+}
+
+function Get-RegressionSummaryRows {
+    param([System.Collections.IDictionary]$Results)
+
+    return @(
+        $Results.GetEnumerator() |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Test = $_.Key
+                    Status = [string]$_.Value.Status
+                    Detail = [string]$_.Value.Detail
+                }
+            }
+    )
+}
+
+function Write-RegressionSummaryFiles {
+    param(
+        [System.Collections.IDictionary]$Results,
+        [string]$TargetRootPath,
+        [string]$ProgramDataRootPath,
+        [string]$RuleFileName,
+        [bool]$Succeeded,
+        [string]$FailureDetail,
+        [object]$FinalDriverStatus
+    )
+
+    $summaryRows = Get-RegressionSummaryRows -Results $Results
+    $txtPath = Join-Path $TargetRootPath 'bundle-regression-summary.txt'
+    $jsonPath = Join-Path $TargetRootPath 'bundle-regression-summary.json'
+
+    New-Item -ItemType Directory -Force -Path $TargetRootPath | Out-Null
+
+    $txtLines = [System.Collections.Generic.List[string]]::new()
+    $txtLines.Add('HostGuard bundle regression summary')
+    $txtLines.Add("GeneratedAt: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+    $txtLines.Add("TargetRoot: $TargetRootPath")
+    $txtLines.Add("ProgramDataRoot: $ProgramDataRootPath")
+    $txtLines.Add("RuleFile: $RuleFileName")
+    $txtLines.Add("Succeeded: $Succeeded")
+    if (-not [string]::IsNullOrWhiteSpace($FailureDetail)) {
+        $txtLines.Add("FailureDetail: $FailureDetail")
+    }
+    $txtLines.Add('')
+    $txtLines.Add('Regression summary:')
+    $txtLines.Add(($summaryRows | Format-Table -AutoSize | Out-String).TrimEnd())
+
+    if ($null -ne $FinalDriverStatus) {
+        $txtLines.Add('')
+        $txtLines.Add('Final driver status:')
+        $txtLines.Add(($FinalDriverStatus | Format-List * | Out-String).TrimEnd())
+    }
+
+    Set-Content -Path $txtPath -Value $txtLines -Encoding UTF8
+
+    $summaryPayload = [ordered]@{
+        generated_at = (Get-Date).ToString('s')
+        target_root = $TargetRootPath
+        program_data_root = $ProgramDataRootPath
+        rule_file = $RuleFileName
+        succeeded = $Succeeded
+        failure_detail = $FailureDetail
+        tests = @($summaryRows)
+        final_driver_status = $FinalDriverStatus
+    }
+
+    $summaryPayload | ConvertTo-Json -Depth 6 | Set-Content -Path $jsonPath -Encoding UTF8
+
+    Write-Step "Wrote regression summary files: $txtPath , $jsonPath"
 }
 
 function Invoke-Tool {
@@ -267,6 +330,7 @@ $targetRegistryRollbackScript = Join-Path $TargetRoot 'RegistryRollbackTests.ps1
 $targetRegistryInteropScript = Join-Path $TargetRoot 'RegistryInteropTests.ps1'
 $targetLifecycleStressScript = Join-Path $TargetRoot 'LifecycleStressTests.ps1'
 $regressionResults = Initialize-RegressionResultMap
+$finalDriverStatusSnapshot = $null
 
 Write-Step "Bundle root: $bundleRoot"
 Write-Step "Target root: $TargetRoot"
@@ -472,8 +536,7 @@ try {
     $finalStatus = Invoke-HostGuardStatusJson -HostGuardExePath $targetHostGuardExe
     if ($finalStatus.driver_connected -and $null -ne $finalStatus.driver_status) {
         $driverStatus = $finalStatus.driver_status
-        Write-Host ''
-        [pscustomobject]@{
+        $finalDriverStatusSnapshot = [pscustomobject]@{
             ProtectionMode = [string]$driverStatus.protection_mode
             PolicyEpoch = [UInt64]$driverStatus.policy_epoch
             Requests = [UInt64]$driverStatus.process_verdict_request_count
@@ -482,7 +545,13 @@ try {
             CacheMisses = [UInt64]$driverStatus.cache_miss_count
             CacheFlushes = [UInt64]$driverStatus.cache_flush_count
             SlowPath = [UInt64]$driverStatus.slow_path_count
-        } | Format-Table -AutoSize
+            FileProtectionBlocks = if ($null -ne $driverStatus.PSObject.Properties['file_protection_block_count']) { [UInt64]$driverStatus.file_protection_block_count } else { [UInt64]0 }
+            FileProtectionCreateBlocks = if ($null -ne $driverStatus.PSObject.Properties['file_protection_create_block_count']) { [UInt64]$driverStatus.file_protection_create_block_count } else { [UInt64]0 }
+            FileProtectionSetInfoBlocks = if ($null -ne $driverStatus.PSObject.Properties['file_protection_set_information_block_count']) { [UInt64]$driverStatus.file_protection_set_information_block_count } else { [UInt64]0 }
+            LastFileProtectionInfoClass = if ($null -ne $driverStatus.PSObject.Properties['last_file_protection_info_class']) { [string]$driverStatus.last_file_protection_info_class } else { '' }
+        }
+        Write-Host ''
+        $finalDriverStatusSnapshot | Format-Table -AutoSize
     }
 
     $runSucceeded = $true
@@ -512,6 +581,14 @@ catch {
 }
 finally {
     Write-RegressionSummary -Results $regressionResults
+    Write-RegressionSummaryFiles `
+        -Results $regressionResults `
+        -TargetRootPath $TargetRoot `
+        -ProgramDataRootPath $ProgramDataRoot `
+        -RuleFileName $RuleFile `
+        -Succeeded $runSucceeded `
+        -FailureDetail $failureMessage `
+        -FinalDriverStatus $finalDriverStatusSnapshot
 
     if (-not $LeaveInstalled) {
         Stop-AndRemoveHostGuardService -HostGuardExePath $targetHostGuardExe

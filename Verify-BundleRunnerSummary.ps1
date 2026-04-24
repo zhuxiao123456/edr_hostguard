@@ -16,6 +16,9 @@ foreach ($requiredToken in @(
     'Initialize-RegressionResultMap',
     'Set-RegressionResult',
     'Write-RegressionSummary',
+    'Write-RegressionSummaryFiles',
+    'bundle-regression-summary.json',
+    'bundle-regression-summary.txt',
     'Regression summary:',
     '-Status ''PASS''',
     '-Status ''SKIP'''
