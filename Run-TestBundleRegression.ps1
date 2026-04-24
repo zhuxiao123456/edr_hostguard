@@ -39,6 +39,67 @@ function Write-Warn {
     Write-Host "[!] $Message" -ForegroundColor Yellow
 }
 
+function Initialize-RegressionResultMap {
+    $results = [ordered]@{}
+    foreach ($name in @(
+        'ProcessObservedTests.ps1',
+        'FileInteropTests.ps1',
+        'FileProtectionRuntimeCountersTests.ps1',
+        'StatusRuntimeCountersTests.ps1',
+        'RegistryBatchSyncTests.ps1',
+        'RegistryRuleScaleTests.ps1',
+        'RegistryRuleOrderTests.ps1',
+        'RegistryRollbackTests.ps1',
+        'RegistryInteropTests.ps1',
+        'LifecycleStressTests.ps1'
+    )) {
+        $results[$name] = [pscustomobject]@{
+            Status = 'SKIP'
+            Detail = 'Not executed.'
+        }
+    }
+
+    return $results
+}
+
+function Set-RegressionResult {
+    param(
+        [System.Collections.IDictionary]$Results,
+        [string]$Name,
+        [string]$Status,
+        [string]$Detail
+    )
+
+    if (-not $Results.Contains($Name)) {
+        $Results[$Name] = [pscustomobject]@{
+            Status = $Status
+            Detail = $Detail
+        }
+        return
+    }
+
+    $Results[$Name] = [pscustomobject]@{
+        Status = $Status
+        Detail = $Detail
+    }
+}
+
+function Write-RegressionSummary {
+    param([System.Collections.IDictionary]$Results)
+
+    Write-Host ''
+    Write-Host 'Regression summary:' -ForegroundColor Cyan
+    $Results.GetEnumerator() |
+        ForEach-Object {
+            [pscustomobject]@{
+                Test = $_.Key
+                Status = [string]$_.Value.Status
+                Detail = [string]$_.Value.Detail
+            }
+        } |
+        Format-Table -AutoSize
+}
+
 function Invoke-Tool {
     param(
         [string]$FilePath,
@@ -205,6 +266,7 @@ $targetRegistryRuleOrderScript = Join-Path $TargetRoot 'RegistryRuleOrderTests.p
 $targetRegistryRollbackScript = Join-Path $TargetRoot 'RegistryRollbackTests.ps1'
 $targetRegistryInteropScript = Join-Path $TargetRoot 'RegistryInteropTests.ps1'
 $targetLifecycleStressScript = Join-Path $TargetRoot 'LifecycleStressTests.ps1'
+$regressionResults = Initialize-RegressionResultMap
 
 Write-Step "Bundle root: $bundleRoot"
 Write-Step "Target root: $TargetRoot"
@@ -267,6 +329,7 @@ Invoke-Tool -FilePath $targetHostGuardExe -Arguments @('start') -Description 'St
 
 $readyStatus = $null
 $runSucceeded = $false
+$failureMessage = ''
 try {
     $readyStatus = Wait-HostGuardReady -HostGuardExePath $targetHostGuardExe -TimeoutSeconds $ReadyTimeoutSeconds
     Write-Success 'HostGuard status --json reported ready state.'
@@ -277,6 +340,10 @@ try {
         }
 
         Invoke-PowerShellFile -ScriptPath $targetProcessObservedScript -Arguments @() -Description 'Running observed process telemetry regression'
+        Set-RegressionResult -Results $regressionResults -Name 'ProcessObservedTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'ProcessObservedTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipProcessObserved.'
     }
 
     if (-not $SkipFileInterop) {
@@ -285,6 +352,10 @@ try {
         }
 
         Invoke-PowerShellFile -ScriptPath $targetFileInteropScript -Arguments @() -Description 'Running protected-file interop regression'
+        Set-RegressionResult -Results $regressionResults -Name 'FileInteropTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'FileInteropTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipFileInterop.'
     }
 
     if (-not $SkipFileProtectionCounters) {
@@ -295,6 +366,10 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetFileProtectionCounterScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running file-protection runtime counter regression'
+        Set-RegressionResult -Results $regressionResults -Name 'FileProtectionRuntimeCountersTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'FileProtectionRuntimeCountersTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipFileProtectionCounters.'
     }
 
     if (-not $SkipRuntimeCounters) {
@@ -306,6 +381,10 @@ try {
             '-HostGuardPath', $targetHostGuardExe,
             '-RepeatCount', $RepeatCount
         ) -Description 'Running runtime counter regression'
+        Set-RegressionResult -Results $regressionResults -Name 'StatusRuntimeCountersTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'StatusRuntimeCountersTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipRuntimeCounters.'
     }
 
     if (-not $SkipRegistryBatchSync) {
@@ -316,6 +395,10 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetRegistryBatchSyncScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running registry batch-sync hot reload regression'
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryBatchSyncTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryBatchSyncTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipRegistryBatchSync.'
     }
 
     if (-not $SkipRegistryRuleScale) {
@@ -326,6 +409,10 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetRegistryRuleScaleScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running registry dynamic-scale hot reload regression'
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryRuleScaleTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryRuleScaleTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipRegistryRuleScale.'
     }
 
     if (-not $SkipRegistryRuleOrder) {
@@ -336,6 +423,10 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetRegistryRuleOrderScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running registry rule order regression'
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryRuleOrderTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryRuleOrderTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipRegistryRuleOrder.'
     }
 
     if (-not $SkipRegistryRollback) {
@@ -346,6 +437,10 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetRegistryRollbackScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running registry rollback hot reload regression'
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryRollbackTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryRollbackTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipRegistryRollback.'
     }
 
     if (-not $SkipRegistryInterop) {
@@ -354,6 +449,10 @@ try {
         }
 
         Invoke-PowerShellFile -ScriptPath $targetRegistryInteropScript -Arguments @() -Description 'Running registry interop regression'
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryInteropTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'RegistryInteropTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipRegistryInterop.'
     }
 
     if (-not $SkipLifecycleStress) {
@@ -364,6 +463,10 @@ try {
         Invoke-PowerShellFile -ScriptPath $targetLifecycleStressScript -Arguments @(
             '-HostGuardPath', $targetHostGuardExe
         ) -Description 'Running HostGuard lifecycle stress regression'
+        Set-RegressionResult -Results $regressionResults -Name 'LifecycleStressTests.ps1' -Status 'PASS' -Detail 'Executed successfully.'
+    }
+    else {
+        Set-RegressionResult -Results $regressionResults -Name 'LifecycleStressTests.ps1' -Status 'SKIP' -Detail 'Skipped by -SkipLifecycleStress.'
     }
 
     $finalStatus = Invoke-HostGuardStatusJson -HostGuardExePath $targetHostGuardExe
@@ -384,7 +487,32 @@ try {
 
     $runSucceeded = $true
 }
+catch {
+    $failureMessage = $_.Exception.Message
+
+    foreach ($entry in $regressionResults.GetEnumerator()) {
+        if ([string]$entry.Value.Status -eq 'SKIP' -and [string]$entry.Value.Detail -eq 'Not executed.') {
+            Set-RegressionResult -Results $regressionResults -Name $entry.Key -Status 'SKIP' -Detail 'Not reached because the run stopped earlier.'
+        }
+    }
+
+    $failedTestName = $null
+    if ($failureMessage -match '([A-Za-z0-9_-]+Tests\.ps1)') {
+        $failedTestName = $Matches[1]
+    }
+    elseif ($failureMessage -match '([A-Za-z0-9_-]+\.ps1)') {
+        $failedTestName = $Matches[1]
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($failedTestName) -and $regressionResults.Contains($failedTestName)) {
+        Set-RegressionResult -Results $regressionResults -Name $failedTestName -Status 'FAIL' -Detail $failureMessage
+    }
+
+    throw
+}
 finally {
+    Write-RegressionSummary -Results $regressionResults
+
     if (-not $LeaveInstalled) {
         Stop-AndRemoveHostGuardService -HostGuardExePath $targetHostGuardExe
     }
